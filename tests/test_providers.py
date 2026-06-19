@@ -75,3 +75,95 @@ class TestOutlookProvider:
         provider = OutlookProvider()
         with pytest.raises(NotImplementedError, match="Outlook"):
             provider.send_reply("msg-001", "body")
+
+
+class TestGmailProvider:
+    """GmailProvider tests that mock the Google API client — no network calls."""
+
+    def test_fetch_returns_email_message_objects(self, tmp_path, mocker):
+        """fetch_unread_emails must return a list of EmailMessage instances."""
+        from src.providers.google_prov import GmailProvider
+
+        mock_service = mocker.MagicMock()
+        mocker.patch.object(GmailProvider, "_build_service", return_value=mock_service)
+
+        mock_service.users().messages().list().execute.return_value = {
+            "messages": [{"id": "msg-001", "threadId": "thread-001"}]
+        }
+        msg_payload = {
+            "id": "msg-001",
+            "threadId": "thread-001",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    {"name": "From", "value": "alice@example.com"},
+                    {"name": "Subject", "value": "Hello"},
+                    {"name": "Date", "value": "Mon, 15 Jan 2024 09:00:00 +0000"},
+                ],
+                "body": {"data": "SGkgdGhlcmU="},  # base64 "Hi there"
+            },
+        }
+        mock_service.users().messages().get().execute.return_value = msg_payload
+
+        creds_path = tmp_path / "credentials.json"
+        token_path = tmp_path / "token.json"
+        provider = GmailProvider(creds_path, token_path)
+        emails = provider.fetch_unread_emails(max_results=1)
+
+        assert len(emails) == 1
+        assert isinstance(emails[0], EmailMessage)
+        assert emails[0].id == "msg-001"
+        assert emails[0].sender == "alice@example.com"
+        assert emails[0].subject == "Hello"
+        assert emails[0].thread_id == "thread-001"
+
+    def test_fetch_returns_empty_when_no_messages(self, tmp_path, mocker):
+        """fetch_unread_emails returns [] when inbox is empty."""
+        from src.providers.google_prov import GmailProvider
+
+        mock_service = mocker.MagicMock()
+        mocker.patch.object(GmailProvider, "_build_service", return_value=mock_service)
+        mock_service.users().messages().list().execute.return_value = {}
+
+        provider = GmailProvider(tmp_path / "c.json", tmp_path / "t.json")
+        emails = provider.fetch_unread_emails()
+        assert emails == []
+
+    def test_send_reply_returns_true_on_success(self, tmp_path, mocker):
+        """send_reply returns True when the Gmail API succeeds."""
+        from src.providers.google_prov import GmailProvider
+
+        mock_service = mocker.MagicMock()
+        mocker.patch.object(GmailProvider, "_build_service", return_value=mock_service)
+
+        original_msg = {
+            "id": "msg-001",
+            "threadId": "thread-001",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "alice@example.com"},
+                    {"name": "Subject", "value": "Hello"},
+                    {"name": "Message-ID", "value": "<hello@example.com>"},
+                ]
+            },
+        }
+        mock_service.users().messages().get().execute.return_value = original_msg
+        mock_service.users().messages().send().execute.return_value = {"id": "sent-001"}
+
+        provider = GmailProvider(tmp_path / "c.json", tmp_path / "t.json")
+        result = provider.send_reply("msg-001", "Thank you!")
+        assert result is True
+
+    def test_send_reply_returns_false_on_api_error(self, tmp_path, mocker):
+        """send_reply returns False when the Gmail API raises an exception."""
+        from src.providers.google_prov import GmailProvider
+
+        mock_service = mocker.MagicMock()
+        mocker.patch.object(GmailProvider, "_build_service", return_value=mock_service)
+        mock_service.users().messages().get().execute.side_effect = Exception(
+            "API error"
+        )
+
+        provider = GmailProvider(tmp_path / "c.json", tmp_path / "t.json")
+        result = provider.send_reply("msg-001", "body")
+        assert result is False
