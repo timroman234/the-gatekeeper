@@ -1,6 +1,12 @@
 """Shared pytest fixtures for The Gatekeeper test suite."""
+import os
 import pytest
 from pathlib import Path
+
+# Ensure ANTHROPIC_API_KEY is set before any module-level Settings() calls.
+# Tests that use the real API must supply their own key via environment.
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-placeholder")
+
 from src.providers.base import EmailMessage
 
 
