@@ -3,7 +3,11 @@
 Run with: uv run streamlit run app/main.py
 """
 import os
+from dotenv import load_dotenv
+load_dotenv()  # puts .env values into os.environ so ChatAnthropic can find ANTHROPIC_API_KEY
+
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ---------------------------------------------------------------------------
 # IBM Carbon Light design tokens — injected before any st.* render calls
@@ -44,7 +48,7 @@ _CARBON_CSS = """
 
   /* Override Streamlit default chrome */
   .stApp { background-color: var(--cds-background); }
-  .block-container { padding-top: 1rem; }
+  .block-container { padding-top: 3rem; max-width: 100% !important; }
   h1, h2, h3 { font-family: 'IBM Plex Sans', sans-serif; color: var(--cds-text-primary); }
   .stButton > button {
     border-radius: 0;
@@ -58,13 +62,17 @@ _CARBON_CSS = """
     font-family: 'IBM Plex Mono', monospace;
     background-color: var(--cds-layer-01);
   }
-  /* Email list item card */
+  /* Compact sidebar email cards */
   .email-card {
     background: var(--cds-layer-01);
-    border-left: 4px solid var(--cds-border-subtle-01);
-    padding: 0.75rem 1rem;
-    margin-bottom: 0.5rem;
+    border-left: 3px solid var(--cds-border-subtle-01);
+    padding: 0.35rem 0.6rem;
+    margin-bottom: 0.25rem;
+    line-height: 1.3;
   }
+  /* Sidebar email list spacing */
+  [data-testid="stSidebar"] .stMarkdown { margin-bottom: 0 !important; }
+  [data-testid="stSidebar"] .stButton { margin-top: 0 !important; margin-bottom: 0.1rem !important; }
   /* Category tags */
   .tag {
     display: inline-block;
@@ -80,13 +88,14 @@ _CARBON_CSS = """
   .tag-spam { background: var(--cds-tag-spam); color: #fff; }
   .tag-newsletter { background: var(--cds-tag-newsletter); color: #fff; }
 </style>
+
 """
 
 # ---------------------------------------------------------------------------
 # Page config — must be the very first Streamlit call
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="The Contextual Gatekeeper",
+    page_title="The Gatekeeper",
     page_icon="\U0001f512",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -154,7 +163,7 @@ def _run_graph_for_email(email: EmailMessage):
     try:
         return graph.invoke(initial_state, config=config)
     except Exception as exc:
-        st.error(f"Graph error for email {email.id}: {exc}")
+        st.session_state.setdefault("errors", []).append(f"Graph error for {email.id}: {exc}")
         return None
 
 
@@ -199,7 +208,7 @@ def _init_session() -> None:
 def _render_sidebar(emails: list) -> None:
     with st.sidebar:
         st.title("Inbox")
-        if st.button("Refresh Inbox", use_container_width=True):
+        if st.button("Refresh Inbox", use_container_width=True, type="primary"):
             st.session_state.emails = _fetch_emails()
             _save_emails_to_db(st.session_state.emails)
             st.rerun()
@@ -208,7 +217,6 @@ def _render_sidebar(emails: list) -> None:
             st.info("No unread emails. Click Refresh.")
             return
 
-        st.markdown("---")
         for email in emails:
             state = st.session_state.graph_states.get(email.id)
             category = (
@@ -220,14 +228,15 @@ def _render_sidebar(emails: list) -> None:
             suffix = " ✓" if is_processed else ""
 
             tag_html = _tag_html(category) if category not in ("...", None) else ""
+            sender_short = email.sender.split("<")[0].strip()[:28]
+            subject_label = email.subject[:42] + suffix
             st.markdown(
-                f'<div class="email-card">'
-                f"<strong>{email.sender[:30]}</strong>{suffix}<br>"
-                f"<small>{email.subject[:50]}</small>{tag_html}"
+                f'<div style="margin-bottom:0.05rem;line-height:1.2">'
+                f"<span style='font-size:0.7rem;color:#525252'>{sender_short}</span>{tag_html}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            if st.button("Open", key=f"open_{email.id}", use_container_width=True):
+            if st.button(subject_label, key=f"open_{email.id}"):
                 st.session_state.selected_email_id = email.id
                 if email.id not in st.session_state.graph_states:
                     with st.spinner(f"Analysing '{email.subject[:30]}...'"):
@@ -235,6 +244,50 @@ def _render_sidebar(emails: list) -> None:
                         if result:
                             st.session_state.graph_states[email.id] = result
                 st.rerun()
+            st.markdown("<hr style='margin:0.2rem 0;border-color:#e0e0e0'>", unsafe_allow_html=True)
+
+        components.html("""
+<script>
+(function () {
+  function style() {
+    var doc = window.parent.document;
+    var btns = Array.from(doc.querySelectorAll('[data-testid="stSidebar"] .stButton button'));
+    btns = btns.filter(function(b) { return b.textContent.trim() !== 'Refresh Inbox'; });
+    btns.forEach(function (btn) {
+      btn.style.background     = 'none';
+      btn.style.border         = 'none';
+      btn.style.boxShadow      = 'none';
+      btn.style.outline        = 'none';
+      btn.style.borderRadius   = '0';
+      btn.style.padding        = '0';
+      btn.style.margin         = '0 0 0.1rem 0';
+      btn.style.cursor         = 'pointer';
+      btn.style.color          = '#0f62fe';
+      btn.style.fontFamily     = "'IBM Plex Sans', sans-serif";
+      btn.style.fontSize       = '0.78rem';
+      btn.style.fontWeight     = '500';
+      btn.style.textDecoration = 'underline';
+      btn.style.display        = 'block';
+      btn.style.width          = '100%';
+      btn.style.textAlign      = 'left';
+      btn.style.minHeight      = '0';
+      btn.style.height         = 'auto';
+      var p = btn.querySelector('p');
+      if (p) {
+        p.style.textAlign  = 'left';
+        p.style.margin     = '0';
+        p.style.padding    = '0';
+        p.style.whiteSpace = 'normal';
+        p.style.display    = 'block';
+      }
+    });
+  }
+  new MutationObserver(style).observe(window.parent.document.body, { childList: true, subtree: true });
+  style();
+  setTimeout(style, 200);
+})();
+</script>
+""", height=0)
 
 
 # ---------------------------------------------------------------------------
@@ -243,8 +296,50 @@ def _render_sidebar(emails: list) -> None:
 def _render_main_panel(emails: list) -> None:
     selected_id = st.session_state.selected_email_id
     if selected_id is None:
-        st.markdown("## The Contextual Gatekeeper")
+        st.markdown("## The Gatekeeper")
+        st.markdown(
+            "The Gatekeeper uses AI to triage your inbox, classify each email by urgency, "
+            "and draft context-aware replies for your review. "
+            "Open any email from the sidebar to inspect its AI analysis and approve or reject "
+            "the suggested response before it's sent."
+        )
         st.info("Select an email from the sidebar to begin review.")
+
+        # Needs Attention block — urgent/action_required emails not yet processed
+        st.markdown(
+            '<div style="background:#da1e28;color:#fff;padding:0.5rem 0.75rem;'
+            "font-family:'IBM Plex Sans',sans-serif;font-weight:600;"
+            'font-size:0.9rem;margin-top:1.5rem;margin-bottom:0.5rem;">&#9888; Needs Attention</div>',
+            unsafe_allow_html=True,
+        )
+        attention_emails = [
+            e for e in emails
+            if e.id in st.session_state.graph_states
+            and st.session_state.graph_states[e.id].get("extracted_metadata", {}).get("category")
+            in ("urgent", "action_required")
+            and e.id not in st.session_state.processed_ids
+        ]
+        if attention_emails:
+            for e in attention_emails:
+                cat = st.session_state.graph_states[e.id]["extracted_metadata"]["category"]
+                sender_short = e.sender.split("<")[0].strip()[:30]
+                st.markdown(
+                    f'<div class="email-card" style="border-left-color:#da1e28;">'
+                    f"<strong style='font-size:0.85rem'>{sender_short}</strong>"
+                    f"{_tag_html(cat)}<br>"
+                    f"<span style='font-size:0.78rem;color:#525252'>{e.subject[:60]}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("Open", key=f"attn_{e.id}", use_container_width=False):
+                    st.session_state.selected_email_id = e.id
+                    st.rerun()
+        else:
+            st.markdown(
+                "<span style='color:#8d8d8d;font-size:0.85rem'>"
+                "No urgent items — check back after refreshing your inbox.</span>",
+                unsafe_allow_html=True,
+            )
         return
 
     email = next((e for e in emails if e.id == selected_id), None)
@@ -255,6 +350,10 @@ def _render_main_panel(emails: list) -> None:
     state = st.session_state.graph_states.get(selected_id)
     category = (state or {}).get("extracted_metadata", {}).get("category", "processing...")
     reasoning = (state or {}).get("extracted_metadata", {}).get("reasoning", "")
+
+    if st.button("← Home", key="back_home"):
+        st.session_state.selected_email_id = None
+        st.rerun()
 
     col_hdr, col_tag = st.columns([4, 1])
     with col_hdr:
@@ -351,6 +450,10 @@ def _render_main_panel(emails: list) -> None:
 def main() -> None:
     _ensure_data_dir()
     _init_session()
+
+    for err in st.session_state.get("errors", []):
+        st.error(err)
+    st.session_state["errors"] = []
 
     if not st.session_state.emails:
         with st.spinner("Connecting to Gmail..."):

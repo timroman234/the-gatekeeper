@@ -1,7 +1,7 @@
-"""Triage LangGraph node — classifies incoming emails using Claude Opus."""
+"""Triage LangGraph node — classifies incoming emails."""
 from typing import Literal
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
@@ -10,7 +10,7 @@ from src.agents.state import GatekeeperState
 # ---------------------------------------------------------------------------
 # LLM setup
 # ---------------------------------------------------------------------------
-llm = ChatAnthropic(model="claude-opus-4-8", max_tokens=8192)
+llm = ChatOpenAI(model="gpt-4o", max_tokens=8192)
 
 # ---------------------------------------------------------------------------
 # Structured output schema

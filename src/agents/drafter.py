@@ -1,5 +1,5 @@
-"""Drafter LangGraph node — composes email reply drafts using Claude Opus."""
-from langchain_anthropic import ChatAnthropic
+"""Drafter LangGraph node — composes email reply drafts."""
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.agents.state import GatekeeperState
@@ -7,7 +7,7 @@ from src.agents.state import GatekeeperState
 # ---------------------------------------------------------------------------
 # LLM setup
 # ---------------------------------------------------------------------------
-llm = ChatAnthropic(model="claude-opus-4-8", max_tokens=8192)
+llm = ChatOpenAI(model="gpt-4o", max_tokens=8192)
 
 # Categories that never need a reply
 _NO_REPLY_CATEGORIES = {"spam", "newsletter"}
