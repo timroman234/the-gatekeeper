@@ -291,6 +291,105 @@ def _render_sidebar(emails: list) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Sender rule management — home panel
+# ---------------------------------------------------------------------------
+def _render_manage_rules() -> None:
+    """Expander on the home panel for viewing, adding, and deleting sender rules."""
+    with st.expander("Manage Sender Rules"):
+        with LocalStore(settings.db_path) as store:
+            rules = store.list_sender_rules()
+
+        if rules:
+            st.markdown("**Existing rules** — click Delete to remove:")
+            for rule in rules:
+                col_pat, col_cat, col_note, col_del = st.columns([3, 2, 3, 1])
+                with col_pat:
+                    st.markdown(f"`{rule['pattern']}`")
+                with col_cat:
+                    st.markdown(_tag_html(rule["override_category"]), unsafe_allow_html=True)
+                with col_note:
+                    st.caption(rule["note"] or "—")
+                with col_del:
+                    if st.button("Delete", key=f"del_rule_{rule['id']}"):
+                        with LocalStore(settings.db_path) as store:
+                            store.delete_sender_rule(rule["id"])
+                        st.rerun()
+        else:
+            st.caption("No rules yet. Add one below.")
+
+        st.markdown("---")
+        st.markdown("**Add a new rule:**")
+        new_pattern = st.text_input(
+            "Email or domain",
+            placeholder="tim@example.com  or  @example.com",
+            key="new_rule_pattern",
+        )
+        new_category = st.selectbox(
+            "Always classify as",
+            ["urgent", "action_required", "informational", "spam", "newsletter"],
+            index=1,
+            key="new_rule_category",
+        )
+        new_note = st.text_input(
+            "Note (optional)",
+            placeholder="e.g. my work domain",
+            key="new_rule_note",
+        )
+        if st.button("Add Rule", key="add_rule_btn", type="primary"):
+            if new_pattern.strip():
+                with LocalStore(settings.db_path) as store:
+                    store.add_sender_rule(new_pattern.strip(), new_category, new_note.strip())
+                st.success(f"Rule added: `{new_pattern}` → **{new_category}**")
+                st.rerun()
+            else:
+                st.warning("Enter an email address or domain pattern first.")
+
+
+# ---------------------------------------------------------------------------
+# Reclassify widget — email detail view
+# ---------------------------------------------------------------------------
+def _render_reclassify_widget(email, current_category: str) -> None:
+    """Expander that lets the user correct the AI triage classification."""
+    _CATS = ["urgent", "action_required", "informational", "spam", "newsletter"]
+    with st.expander("Correct Classification"):
+        st.caption(f"Current: **{current_category}**")
+        new_cat = st.selectbox(
+            "Correct category",
+            _CATS,
+            index=_CATS.index(current_category) if current_category in _CATS else 2,
+            key=f"reclassify_select_{email.id}",
+        )
+        also_add_rule = st.checkbox(
+            f"Always classify emails from this sender as **{new_cat}**",
+            key=f"reclassify_add_rule_{email.id}",
+        )
+        rule_note = ""
+        if also_add_rule:
+            rule_note = st.text_input(
+                "Note (optional)",
+                placeholder="e.g. my other email account",
+                key=f"reclassify_note_{email.id}",
+            )
+        if st.button("Save Correction", key=f"reclassify_save_{email.id}"):
+            with LocalStore(settings.db_path) as store:
+                store.save_correction(
+                    email.id, email.sender, email.subject, current_category, new_cat,
+                )
+                if also_add_rule:
+                    store.add_sender_rule(email.sender, new_cat, rule_note)
+            if email.id in st.session_state.graph_states:
+                st.session_state.graph_states[email.id]["extracted_metadata"]["category"] = new_cat
+                st.session_state.graph_states[email.id]["extracted_metadata"]["reasoning"] = (
+                    f"Manually reclassified from '{current_category}' to '{new_cat}'."
+                )
+            st.success(
+                f"Saved. Future emails from this sender will be classified as **{new_cat}**."
+                if also_add_rule else f"Correction saved as **{new_cat}**."
+            )
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Main panel
 # ---------------------------------------------------------------------------
 def _render_main_panel(emails: list) -> None:
@@ -340,6 +439,9 @@ def _render_main_panel(emails: list) -> None:
                 "No urgent items — check back after refreshing your inbox.</span>",
                 unsafe_allow_html=True,
             )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        _render_manage_rules()
         return
 
     email = next((e for e in emails if e.id == selected_id), None)
@@ -366,6 +468,9 @@ def _render_main_panel(emails: list) -> None:
     if reasoning:
         with st.expander("AI Classification Reasoning"):
             st.write(reasoning)
+
+    if category not in ("processing...", "..."):
+        _render_reclassify_widget(email, category)
 
     st.markdown("---")
 
