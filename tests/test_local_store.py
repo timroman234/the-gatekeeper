@@ -4,6 +4,11 @@ from pathlib import Path
 from src.database.local_store import LocalStore
 
 
+@pytest.fixture
+def tmp_store(tmp_path):
+    return LocalStore(tmp_path / "test.db")
+
+
 class TestLocalStoreInit:
     def test_creates_tables_on_init(self, tmp_db_path):
         store = LocalStore(tmp_db_path)
@@ -128,3 +133,75 @@ class TestDrafts:
         )
         assert cursor.fetchone()[0] == "sent"
         store.close()
+
+
+class TestSenderRules:
+    def test_add_and_list(self, tmp_store):
+        rule_id = tmp_store.add_sender_rule("tim@sf415.com", "action_required", "my alt email")
+        assert isinstance(rule_id, int)
+        rules = tmp_store.list_sender_rules()
+        assert len(rules) == 1
+        assert rules[0]["pattern"] == "tim@sf415.com"
+        assert rules[0]["override_category"] == "action_required"
+        assert rules[0]["note"] == "my alt email"
+
+    def test_get_sender_rule_exact_match(self, tmp_store):
+        tmp_store.add_sender_rule("tim@sf415.com", "action_required")
+        result = tmp_store.get_sender_rule("Tim Roman <tim@sf415.com>")
+        assert result is not None
+        assert result["override_category"] == "action_required"
+
+    def test_get_sender_rule_domain_match(self, tmp_store):
+        tmp_store.add_sender_rule("@sf415.com", "informational", "whole domain")
+        result = tmp_store.get_sender_rule("anyone <other@sf415.com>")
+        assert result is not None
+        assert result["override_category"] == "informational"
+
+    def test_get_sender_rule_exact_wins_over_domain(self, tmp_store):
+        tmp_store.add_sender_rule("@sf415.com", "informational")
+        tmp_store.add_sender_rule("tim@sf415.com", "urgent")
+        result = tmp_store.get_sender_rule("tim@sf415.com")
+        assert result["override_category"] == "urgent"
+
+    def test_get_sender_rule_no_match_returns_none(self, tmp_store):
+        assert tmp_store.get_sender_rule("nobody@nowhere.com") is None
+
+    def test_delete_sender_rule(self, tmp_store):
+        rule_id = tmp_store.add_sender_rule("x@x.com", "spam")
+        tmp_store.delete_sender_rule(rule_id)
+        assert tmp_store.list_sender_rules() == []
+
+
+class TestTriageCorrections:
+    def test_save_and_retrieve_corrections(self, tmp_store):
+        from src.providers.base import EmailMessage
+        email = EmailMessage(id="e1", sender="x@x.com", subject="Hi",
+                             body="body", received_at="2026-01-01", thread_id="")
+        tmp_store.save_email(email)
+        correction_id = tmp_store.save_correction(
+            "e1", "x@x.com", "Hi", "spam", "action_required"
+        )
+        assert isinstance(correction_id, int)
+        corrections = tmp_store.get_recent_corrections(limit=5)
+        assert len(corrections) == 1
+        assert corrections[0]["original_category"] == "spam"
+        assert corrections[0]["corrected_category"] == "action_required"
+
+    def test_get_recent_corrections_respects_limit(self, tmp_store):
+        from src.providers.base import EmailMessage
+        for i in range(5):
+            e = EmailMessage(id=f"e{i}", sender="x@x.com", subject="s",
+                             body="b", received_at="2026-01-01", thread_id="")
+            tmp_store.save_email(e)
+            tmp_store.save_correction(f"e{i}", "x@x.com", "s", "spam", "informational")
+        assert len(tmp_store.get_recent_corrections(limit=3)) == 3
+
+    def test_get_recent_corrections_newest_first(self, tmp_store):
+        from src.providers.base import EmailMessage
+        for i in range(3):
+            e = EmailMessage(id=f"e{i}", sender="x@x.com", subject=f"s{i}",
+                             body="b", received_at="2026-01-01", thread_id="")
+            tmp_store.save_email(e)
+            tmp_store.save_correction(f"e{i}", "x@x.com", f"s{i}", "spam", "informational")
+        corrections = tmp_store.get_recent_corrections(limit=10)
+        assert corrections[0]["subject"] == "s2"
