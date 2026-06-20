@@ -1,4 +1,4 @@
-# The Contextual Gatekeeper
+# The Gatekeeper
 
 An AI-powered email triage and reply assistant built with LangGraph, Claude Opus 4.8, and Streamlit.
 
