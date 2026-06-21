@@ -1,6 +1,8 @@
 """Gmail provider using Google OAuth2 and the Gmail REST API."""
 import base64
+import json
 import logging
+import os
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import List
@@ -31,26 +33,33 @@ class GmailProvider(ICommunicationProvider):
     def _build_service(self):
         """Authenticate and return the Gmail API service object.
 
-        On first run, opens a browser for OAuth consent and writes token.json.
-        On subsequent runs, loads and refreshes token.json automatically.
+        In production (Railway): reads token from GMAIL_TOKEN_JSON env var.
+        In local dev: reads token.json from disk, opens browser on first run.
         """
         creds: Credentials | None = None
+        token_env = os.environ.get("GMAIL_TOKEN_JSON")
 
-        if self._token_path.exists():
-            creds = Credentials.from_authorized_user_file(
-                str(self._token_path), SCOPES
-            )
+        if token_env:
+            creds = Credentials.from_authorized_user_info(json.loads(token_env), SCOPES)
+        elif self._token_path.exists():
+            creds = Credentials.from_authorized_user_file(str(self._token_path), SCOPES)
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
+                if not token_env:
+                    self._token_path.write_text(creds.to_json())
             else:
+                if token_env:
+                    raise RuntimeError(
+                        "GMAIL_TOKEN_JSON is set but the token is invalid and cannot be refreshed. "
+                        "Re-generate token.json locally and update the env var."
+                    )
                 flow = InstalledAppFlow.from_client_secrets_file(
                     str(self._credentials_path), SCOPES
                 )
                 creds = flow.run_local_server(port=0)
-
-            self._token_path.write_text(creds.to_json())
+                self._token_path.write_text(creds.to_json())
 
         return build("gmail", "v1", credentials=creds)
 
